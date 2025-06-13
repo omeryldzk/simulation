@@ -105,6 +105,7 @@ class BaseInputGenerator:
             dataset_id: BigQuery dataset ID
             table_id: BigQuery table ID
             service_account_path: Path to service account JSON (optional)
+            all_unique_features: List of features specific to this model
         """
         self.engine = create_engine(DATABASE_URL)
         self.all_unique_features = all_unique_features
@@ -114,6 +115,9 @@ class BaseInputGenerator:
             self.client = bigquery.Client(project=project_id)
             
         self.table_ref = f"{project_id}.{dataset_id}.{table_id}"
+        
+        print(f"✅ BaseInputGenerator initialized with {len(self.all_unique_features)} features")
+        print(f"   First 5 features: {self.all_unique_features[:5]}")
     
     def _convert_pandas_to_dict(self, pandas_series):
         """Convert pandas Series to dictionary with proper type conversion"""
@@ -159,7 +163,7 @@ class BaseInputGenerator:
 
     def _get_base_input_vector(self, program_id, prediction_year):
         """Generate base input vector using PostgreSQL data."""
-        # Initialize with None instead of np.nan
+        # Initialize with None instead of np.nan - ONLY for features this model needs
         base_vector = {feat: None for feat in self.all_unique_features}
         previous_year = int(prediction_year - 1)  # Ensure it's a Python int
         
@@ -205,61 +209,6 @@ class BaseInputGenerator:
                             base_vector[feat] = convert_value(current_val)
                         elif prev_ma is not None:
                             base_vector[feat] = convert_value(prev_ma)
-                        
-            
-
-            # # Then handle MA features
-            # for feat in base_vector:
-            #     if feat.endswith("_MA") and not (feat.startswith("lag_") or feat.startswith("current_")):
-            #         base_feat = feat[:-3]
-            #         if base_feat in raw_prev_year_dict and feat in prev_year_dict:
-            #             n = len(program_history)
-                        
-            #             if n > 1:
-            #                 prev_ma = prev_year_dict.get(feat)
-            #                 if prev_ma is not None:
-            #                     current_value = float(raw_prev_year_dict[base_feat])
-            #                     prev_ma = float(prev_ma)
-            #                     new_ma = (prev_ma * (n) + current_value) / n + 1
-            #                     base_vector[feat] = float(new_ma)  
-            #                 else:
-            #                     base_vector[feat] = convert_value(prev_year_dict[feat])
-            #             else:
-            #                 base_vector[feat] = convert_value(raw_prev_year_dict[base_feat])
-                            
-            #     elif feat.startswith("lag_") and feat.endswith("_MA"):
-            #         base_feat = feat[4:-3]
-            #         if base_feat in raw_prev_year_dict and feat in prev_year_dict:
-            #             n = len(program_history)
-                        
-            #             if n > 1:
-            #                 prev_ma = prev_year_dict.get(feat)
-            #                 if prev_ma is not None:
-            #                     current_value = float(raw_prev_year_dict[base_feat])
-            #                     prev_ma = float(prev_ma)
-            #                     new_ma = (prev_ma * (n) + current_value) / n + 1
-            #                     base_vector[feat] = float(new_ma)  
-            #                 else:
-            #                     base_vector[feat] = convert_value(prev_year_dict[feat])
-            #             else:
-            #                 base_vector[feat] = convert_value(raw_prev_year_dict[base_feat])
-            #     elif feat.startswith("current_") and feat.endswith("_MA"):
-            #         base_feat = feat[8:-3]
-                    
-            #         if base_feat in raw_prev_year_dict and feat in prev_year_dict:
-            #             n = len(program_history)
-                        
-            #             if n > 1:
-            #                 prev_ma = prev_year_dict.get(feat)
-            #                 if prev_ma is not None:
-            #                     current_value = float(raw_prev_year_dict[base_feat])
-            #                     prev_ma = float(prev_ma)
-            #                     new_ma = (prev_ma * (n) + current_value) / n + 1
-            #                     base_vector[feat] = float(new_ma)  
-            #                 else:
-            #                     base_vector[feat] = convert_value(prev_year_dict[feat])
-            #             else:
-            #                 base_vector[feat] = convert_value(raw_prev_year_dict[base_feat])
                                 
                 # Fill other features directly from previous year data
                 elif feat in prev_year_dict and prev_year_dict[feat] is not None:
@@ -283,6 +232,7 @@ class BaseInputGenerator:
         
         print(f"Generating base input data for {len(program_ids)} programs...")
         print(f"Saving to file: {output_file}")
+        print(f"Each record will have {len(self.all_unique_features)} features")
         
         with open(output_file, 'w') as f:
             for i, program_id in enumerate(program_ids):
@@ -290,6 +240,11 @@ class BaseInputGenerator:
                     program_id = int(program_id)
                     base_input = self._get_base_input_vector(program_id, prediction_year)
                     now = datetime.utcnow().isoformat()
+                    
+                    # Verify the feature count matches expectation
+                    if len(base_input) != len(self.all_unique_features):
+                        print(f"⚠️  WARNING: Feature count mismatch for program {program_id}")
+                        print(f"   Expected: {len(self.all_unique_features)}, Got: {len(base_input)}")
                     
                     # Verify JSON serialization works
                     try:
@@ -385,24 +340,54 @@ class BaseInputGenerator:
             print(f"Error reading file stats: {e}")
             return None
 
-    def process_all_programs(self, program_ids, prediction_year, keep_file=False, force_regenerate=False):
-        """Complete workflow: generate data, save to file, load to BigQuery"""
-        output_file = f"base_input_data_os_ranking_{prediction_year}.jsonl"
+    def process_all_programs(self, program_ids, prediction_year, model_suffix="", keep_file=False, force_regenerate=False):
+        """Complete workflow with model-specific file naming and feature verification"""
+        # FIXED: Make the output file name model-specific
+        if model_suffix:
+            output_file = f"base_input_data_os_ranking_{prediction_year}_{model_suffix}.jsonl"
+        else:
+            output_file = f"base_input_data_os_ranking_{prediction_year}.jsonl"
+        
+        print(f"Using output file: {output_file}")
+        print(f"✅ Feature count for this model: {len(self.all_unique_features)}")
         
         # Check if file already exists
         if os.path.exists(output_file) and not force_regenerate:
             print(f"Found existing file: {output_file}")
             
-            # Get file statistics
+            # Get file statistics and verify feature count
             stats = self.get_file_stats(output_file)
             if stats:
                 print(f"File contains {stats['records']} records ({stats['size_mb']} MB)")
+                
+                # Verify the feature count in the existing file
+                try:
+                    with open(output_file, 'r') as f:
+                        first_line = f.readline().strip()
+                        if first_line:
+                            record = json.loads(first_line)
+                            base_input = json.loads(record['base_input'])
+                            file_feature_count = len(base_input)
+                            
+                            print(f"✅ Existing file has {file_feature_count} features")
+                            
+                            if file_feature_count != len(self.all_unique_features):
+                                print(f"⚠️  WARNING: Feature count mismatch!")
+                                print(f"   Model expects: {len(self.all_unique_features)} features")
+                                print(f"   File contains: {file_feature_count} features")
+                                print(f"   Force regenerating file...")
+                                force_regenerate = True
+                except Exception as e:
+                    print(f"❌ Error reading existing file: {e}")
+                    print("Force regenerating file...")
+                    force_regenerate = True
             
-            print("Skipping data generation and proceeding to BigQuery loading...")
-            print("(Use force_regenerate=True to regenerate the file)")
-            successful = stats['records'] if stats else None
-            failed = []
-        else:
+            if not force_regenerate:
+                print("Skipping data generation and proceeding to BigQuery loading...")
+                successful = stats['records'] if stats else None
+                failed = []
+        
+        if force_regenerate or not os.path.exists(output_file):
             if force_regenerate and os.path.exists(output_file):
                 print(f"Force regenerate enabled. Overwriting existing file: {output_file}")
             
@@ -410,6 +395,25 @@ class BaseInputGenerator:
             successful, failed, file_path = self.generate_and_save_to_file(
                 program_ids, prediction_year, output_file
             )
+            
+            # Verify the generated file has correct feature count
+            if os.path.exists(output_file):
+                try:
+                    with open(output_file, 'r') as f:
+                        first_line = f.readline().strip()
+                        if first_line:
+                            record = json.loads(first_line)
+                            base_input = json.loads(record['base_input'])
+                            generated_feature_count = len(base_input)
+                            
+                            print(f"✅ Generated file has {generated_feature_count} features")
+                            
+                            if generated_feature_count != len(self.all_unique_features):
+                                print(f"❌ ERROR: Feature count mismatch after generation!")
+                                print(f"   Expected: {len(self.all_unique_features)}")
+                                print(f"   Generated: {generated_feature_count}")
+                except Exception as e:
+                    print(f"❌ Error verifying generated file: {e}")
         
         # Step 2: Load to BigQuery
         if os.path.exists(output_file):
@@ -430,20 +434,25 @@ class BaseInputGenerator:
         
         return successful, failed
 
-
-
 def process_model(model_name, model_config, program_ids, prediction_year=2025):
-    """Process a single model and generate base input data"""
+    """Process a single model and generate base input data with enhanced debugging"""
     print(f"\n{'='*60}")
     print(f"PROCESSING MODEL: {model_name.upper()}")
     print(f"{'='*60}")
     
     try:
         # Load the model to get features
-        print(f"Loading model from: {model_config['model_file']}")
-        ranking_model = joblib.load(model_config['model_file'])
+        model_path = os.path.join(MODEL_ASSETS_DIR, model_config['model_file'])
+        print(f"Loading model from: {model_path}")
+        
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"Model file not found: {model_path}")
+            
+        ranking_model = joblib.load(model_path)
         features = ranking_model.feature_names_in_.tolist()
-        print(f"Found {len(features)} features for model {model_name}")
+        print(f"✅ Found {len(features)} features for model {model_name}")
+        print(f"   First 10 features: {features[:10]}")
+        print(f"   Last 5 features: {features[-5:]}")
         
         # Create table ID specific to this model
         table_id = f"{BASE_TABLE_ID}_{model_config['table_suffix']}"
@@ -452,22 +461,26 @@ def process_model(model_name, model_config, program_ids, prediction_year=2025):
         print(f"Creating/checking table: {PROJECT_ID}.{DATASET_ID}.{table_id}")
         create_base_input_table(PROJECT_ID, DATASET_ID, table_id, SERVICE_ACCOUNT_PATH)
         
-        # Initialize generator for this model
+        # Initialize generator for this model with model-specific features
         generator = BaseInputGenerator(
             project_id=PROJECT_ID,
             dataset_id=DATASET_ID,
             table_id=table_id,
             service_account_path=SERVICE_ACCOUNT_PATH,
-            all_unique_features=features
+            all_unique_features=features  # Each model gets its own features
         )
         
-        # Process all programs for this model
+        # Verify the generator has the correct features
+        print(f"✅ Generator initialized with {len(generator.all_unique_features)} features")
+        
+        # Process all programs for this model with model-specific output file
         print(f"Processing {len(program_ids)} programs for model {model_name}")
         successful, failed = generator.process_all_programs(
             program_ids, 
-            prediction_year, 
-            keep_file=True,  # Set to False to auto-delete the file after loading
-            force_regenerate=False  # Set to True to regenerate even if file exists
+            prediction_year,
+            model_suffix=model_config['table_suffix'],  # FIXED: Make file names unique
+            keep_file=True,
+            force_regenerate=False
         )
         
         # Print summary for this model
@@ -479,6 +492,7 @@ def process_model(model_name, model_config, program_ids, prediction_year=2025):
         else:
             print("Used existing file - processing count unknown")
         print(f"Failed to process: {len(failed)} programs")
+        print(f"Features in this model: {len(features)}")
         print(f"Data available in BigQuery table: {PROJECT_ID}.{DATASET_ID}.{table_id}")
         
         return {
@@ -490,7 +504,7 @@ def process_model(model_name, model_config, program_ids, prediction_year=2025):
         }
         
     except Exception as e:
-        print(f"ERROR processing model {model_name}: {str(e)}")
+        print(f"❌ ERROR processing model {model_name}: {str(e)}")
         return {
             'model_name': model_name,
             'successful': 0,
@@ -500,36 +514,95 @@ def process_model(model_name, model_config, program_ids, prediction_year=2025):
         }
 
 def main():
-    """Main function to process all models"""
+    """Main function to process all models with better debugging"""
     print("Starting multi-model base input generation...")
     
-    # Get historical data once (since all models use the same historical data)
-    print("Getting historical data...")
+    # First, debug the models to understand feature differences
+    print(f"\n{'='*60}")
+    print("DEBUGGING MODEL FEATURES")
+    print(f"{'='*60}")
     
-    # Use the first model to get historical data (they all use the same data)
-    first_model_path = list(MODELS_CONFIG.values())[0]['model_file']
-    first_model_path = os.path.join(MODEL_ASSETS_DIR, first_model_path)
-    temp_model = joblib.load(first_model_path)
+    model_features = {}
+    all_model_features = {}
+    
+    for model_name, model_config in MODELS_CONFIG.items():
+        try:
+            model_path = os.path.join(MODEL_ASSETS_DIR, model_config['model_file'])
+            if os.path.exists(model_path):
+                model = joblib.load(model_path)
+                features = model.feature_names_in_.tolist()
+                model_features[model_name] = len(features)
+                all_model_features[model_name] = set(features)
+                print(f"Model {model_name}: {len(features)} features")
+            else:
+                print(f"❌ Model file not found: {model_path}")
+        except Exception as e:
+            print(f"❌ Error loading {model_name}: {e}")
+    
+    # Check if all models have the same number of features
+    if len(set(model_features.values())) == 1:
+        print(f"\n⚠️  WARNING: All models have the same number of features ({list(model_features.values())[0]})")
+        
+        # Check if they actually have the same features
+        if len(all_model_features) > 1:
+            model_names = list(all_model_features.keys())
+            base_features = all_model_features[model_names[0]]
+            all_identical = True
+            
+            for model_name in model_names[1:]:
+                if all_model_features[model_name] != base_features:
+                    all_identical = False
+                    break
+            
+            if all_identical:
+                print("   All models have IDENTICAL feature sets!")
+                print("   This explains why base input vectors have the same shape.")
+            else:
+                print("   Models have DIFFERENT feature sets despite same count!")
+    else:
+        print(f"\n✅ Models have different numbers of features (as expected)")
+        for model_name, count in model_features.items():
+            print(f"   {model_name}: {count} features")
+    
+    # Get historical data
+    print(f"\n{'='*60}")
+    print("GETTING HISTORICAL DATA")
+    print(f"{'='*60}")
+    
+    # Use any available model to get historical data
+    available_model = None
+    for model_name, model_config in MODELS_CONFIG.items():
+        model_path = os.path.join(MODEL_ASSETS_DIR, model_config['model_file'])
+        if os.path.exists(model_path):
+            available_model = (model_name, model_config)
+            break
+    
+    if not available_model:
+        print("❌ No available models found!")
+        return
+    
+    model_name, model_config = available_model
+    model_path = os.path.join(MODEL_ASSETS_DIR, model_config['model_file'])
+    temp_model = joblib.load(model_path)
     temp_features = temp_model.feature_names_in_.tolist()
     
     # Create temporary generator just to get historical data
     temp_generator = BaseInputGenerator(
         project_id=PROJECT_ID,
         dataset_id=DATASET_ID,
-        table_id="temp",  # Won't be used
+        table_id="temp",
         service_account_path=SERVICE_ACCOUNT_PATH,
         all_unique_features=temp_features
     )
     
-    # Get all unique program IDs from PostgreSQL
+    # Get program IDs
     train_df = temp_generator._get_historical_data()
-    # Get unique program IDs from historical data for current academic year = 2024
     train_df = train_df[train_df['current_academicYear'] == 2024]
     program_ids = train_df['idOSYM'].dropna().astype(int).unique()
     print(f"Found {len(program_ids)} unique programs in historical data")
     
     # Set prediction year
-    prediction_year = 2025  # Predict for next year
+    prediction_year = 2025
     
     # Process each model
     results = []
@@ -564,41 +637,41 @@ def main():
         if result['table_id']:
             print(f"  - Table: {PROJECT_ID}.{DATASET_ID}.{result['table_id']}")
     
-    # Save all failed programs to CSV if any
+    # Save failed programs
     if all_failed_programs:
         failed_df = pd.DataFrame(all_failed_programs)
         failed_df.to_csv('failed_programs_all_models.csv', index=False)
-        print(f"\nFull list of failed programs for all models saved to 'failed_programs_all_models.csv'")
+        print(f"\nFailed programs saved to 'failed_programs_all_models.csv'")
         
-        # Show summary of failures by model
-        print(f"\nFailure summary by model:")
         failure_summary = failed_df.groupby('model').size()
+        print(f"\nFailure summary by model:")
         for model, count in failure_summary.items():
             print(f"  - {model}: {count} failures")
     
     print(f"\nBase input vectors generated for prediction year: {prediction_year}")
-    print(f"Data available in BigQuery tables with suffix pattern: {PROJECT_ID}.{DATASET_ID}.{BASE_TABLE_ID}_{{model_version}}")
+    print(f"Data available in BigQuery tables: {PROJECT_ID}.{DATASET_ID}.{BASE_TABLE_ID}_{{v1,v2,v3,v4}}")
 
 if __name__ == "__main__":
     # Configuration for multiple models
     MODELS_CONFIG = {
         'v1': {
-            'model_file': 'occupied_slots_v1.pkl',  # Update with actual path
+            'model_file': 'occupied_slots_v1.pkl',
             'table_suffix': 'v1'
         },
         'v2': {
-            'model_file': 'occupied_slots_v2.pkl',  # Update with actual path
+            'model_file': 'occupied_slots_v2.pkl',
             'table_suffix': 'v2'
         },
         'v3': {
-            'model_file': 'occupied_slots_v3.pkl',  # Update with actual path
+            'model_file': 'occupied_slots_v3.pkl',
             'table_suffix': 'v3'
         },
         'v4': {
-            'model_file': 'occupied_slots_v4.pkl',  # Update with actual path
+            'model_file': 'occupied_slots_v4.pkl',
             'table_suffix': 'v4'
         }
     }
+    
     MODEL_ASSETS_DIR = "./"
     SERVICE_ACCOUNT_PATH = os.path.join(MODEL_ASSETS_DIR, "service-account-key.json")
     PROJECT_ID = "unioptima-461722"

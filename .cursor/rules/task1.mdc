@@ -1,0 +1,9 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+goal of sim_task1.py = Revenue Optimizasyonu (Kota ve Ücret İkilisi Bulma - Mevcut Task 1):
+Amaç: Bir bölüm için hem kontenjanı hem de ücreti aynı anda optimize ederek, bölümün akademik sıralamasının belirli bir seviyenin altına düşmeyecek şekilde mümkün olan en yüksek geliri elde etmesini sağlamak. Kullanıcı, "sıralamamız en fazla %X düşebilir" veya "sıralamamız Y değerinin altına inmemeli" gibi bir kısıt belirleyebilir. and
+@models directry there are 3 type of models  4 occupiedSlot model
+predicts how many students will be selected. BaseRanking model predicts the ranking of last student that selected for the programs (worst exam result and ranking for the program) and TopRanking model predicts the ranking of first student that selected for the programs (best exam result and ranking for the program). I saved the baseInput vectors (for every idOSYM every program that exist 2024 baseInput vector needed for 2025 prediction at bigquery using baseInput.py files)
