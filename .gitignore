@@ -1,3 +1,4 @@
 venv_sim/
 *.json
 *.aim
+*.jsonl
