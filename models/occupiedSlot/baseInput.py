@@ -211,7 +211,7 @@ class BaseInputGenerator:
                             base_vector[feat] = convert_value(prev_ma)
                                 
                 # Fill other features directly from previous year data
-                elif feat in prev_year_dict and prev_year_dict[feat] is not None:
+                elif feat in prev_year_dict and prev_year_dict[feat] is not None and base_vector[feat] is None:
                     base_vector[feat] = convert_value(prev_year_dict[feat])
 
                 # Fill economic indicators for 2025

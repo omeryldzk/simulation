@@ -182,9 +182,14 @@ class RevenueOptimizer:
             if not data:
                 logger.warning(f"No base input vectors found for {model_type} and programs {program_ids}")
                 return pd.DataFrame()
-                
+            
             df = pd.DataFrame(data)
             logger.info(f"Total Base Input Shape for {model_type}: {len(df.columns)} features, {len(df)} records")
+            # Print the lag_occupiedSlot if it exists
+            if 'lag_occupiedSlots' in df.columns:
+                logger.info(f"  lag_occupiedSlots: {df['lag_occupiedSlots'].unique()}")
+            else:
+                logger.info("  lag_occupiedSlot not found in base input vectors")
             return df
             
         except Exception as e:
@@ -218,11 +223,9 @@ class RevenueOptimizer:
             input_df = base_input.copy()
             
             # Override quota and fee if provided
-            if quota is not None and 'quota' in input_df.columns:
-                input_df['quota'] = quota
-            if fee is not None and 'fee' in input_df.columns:
-                input_df['fee'] = fee
-            
+            if quota is not None and 'current_quota' in input_df.columns:
+                input_df['current_quota'] = quota
+           
             # Scale the input features
             scale_features = scaler.feature_names_in_.tolist()
             rest_features = [col for col in input_df.columns if col not in scale_features]
@@ -498,9 +501,9 @@ def main():
     )
     
     # Example usage
-    program_id = 203852027  # Replace with actual program ID
-    current_quota = 10
-    current_fee = 50000
+    program_id = 201010254  # Replace with actual program ID
+    current_quota = 150
+    current_fee = 500000
     min_ranking_threshold = 0.9  # Allow 10% ranking decrease
     
     try:
