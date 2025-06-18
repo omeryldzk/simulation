@@ -501,8 +501,8 @@ def main():
     )
     
     # Example usage
-    program_id = 201010254  # Replace with actual program ID
-    current_quota = 150
+    program_id = 205710526  # Replace with actual program ID
+    current_quota = 50
     current_fee = 500000
     min_ranking_threshold = 0.9  # Allow 10% ranking decrease
     
