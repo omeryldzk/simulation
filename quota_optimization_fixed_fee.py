@@ -478,12 +478,10 @@ class AdvancedDynamicRevenueOptimizer:
             scenario = "CONTRACTION"
             logger.info(f"📉 CONTRACTION SCENARIO: max_quota ({max_quota}) < lag_occupied ({lag_occupied_slots})")
             logger.info("🎯 Logic: Lower quotas signal demand drop → When predicted < lag → ranking worsens")
-            contraction_iterations = max_quota + 1
         else:
             scenario = "MIXED"
             logger.info(f"🔄 MIXED SCENARIO: min_quota ({min_quota}) < lag_occupied ({lag_occupied_slots}) < max_quota ({max_quota})")
             logger.info("🎯 Logic: Phase 1 (≤lag) → improve ranking | Phase 2 (>lag) → worsen ranking")
-            mixed_improve_iterations = max_quota + 1
         
         # ================================================================================
         # STEP 3: INITIALIZE TRACKING VARIABLES
@@ -542,7 +540,7 @@ class AdvancedDynamicRevenueOptimizer:
                     expansion_iterations += 1
                     
                     # Calculate increasing logarithmic effect
-                    g_factor = dynamic_growth_function(expansion_iterations, total_iterations)
+                    g_factor = dynamic_growth_function(rounded_occupied - lag_occupied_slots, total_iterations)
                     rank_change_magnitude = abs(base_rank_change_per_student) * g_factor
                     logger.debug(f"🔍 Expansion Growth Factor: {g_factor:.2f} (Iteration {expansion_iterations})")
                     # Apply program-specific stability factor
@@ -565,10 +563,10 @@ class AdvancedDynamicRevenueOptimizer:
             elif scenario == "CONTRACTION":
                 # CONTRACTION LOGIC: When predicted < lag_occupied → ranking worsens
                 if rounded_occupied < lag_occupied_slots:
-                    contraction_iterations -= 1
+                    contraction_iterations += 1
                     
                     # Calculate diminishing logarithmic effect
-                    g_factor = dynamic_growth_function(contraction_iterations, total_iterations)
+                    g_factor = dynamic_growth_function(lag_occupied_slots - rounded_occupied, total_iterations)
                     rank_change_magnitude = abs(base_rank_change_per_student) * g_factor
                     logger.debug(f"🔍 Contraction Growth Factor: {g_factor:.2f} (Iteration {contraction_iterations})")
                     # Apply program-specific stability factor
@@ -592,10 +590,10 @@ class AdvancedDynamicRevenueOptimizer:
                 # MIXED LOGIC: Two distinct phases with crossover detection
                 if rounded_occupied <= lag_occupied_slots:
                     # PHASE 1: More selective than last year → ranking improves
-                    mixed_improve_iterations -= 1
+                    mixed_improve_iterations += 1
                     
                     # Calculate diminishing logarithmic effect
-                    g_factor = dynamic_growth_function(mixed_improve_iterations, total_iterations)
+                    g_factor = dynamic_growth_function(lag_occupied_slots - rounded_occupied, total_iterations)
                     rank_change_magnitude = abs(base_rank_change_per_student) * g_factor
 
                     # Apply program-specific stability factor
@@ -620,7 +618,7 @@ class AdvancedDynamicRevenueOptimizer:
                     mixed_worsen_iterations += 1
                     
                     # Calculate diminishing logarithmic effect
-                    g_factor = dynamic_growth_function(mixed_worsen_iterations, total_iterations)
+                    g_factor = dynamic_growth_function(rounded_occupied - lag_occupied_slots, total_iterations)
                     rank_change_magnitude = abs(base_rank_change_per_student) * g_factor
 
                     # Apply program-specific stability factor
@@ -757,9 +755,9 @@ class AdvancedDynamicRevenueOptimizer:
                     if lag_occupied_slots - min_prediction < 5:  # Less than 5 student difference
                         logger.info(f"🛑 STOPPING (Contraction): Limited contraction effect detected (min: {min_prediction} vs lag: {lag_occupied_slots})")
                         break
-                elif contraction_iterations >= 15:
-                    logger.info(f"🛑 STOPPING (Contraction): Maximum contraction iterations reached ({contraction_iterations})")
-                    break
+                # elif contraction_iterations >= 15:
+                #     logger.info(f"🛑 STOPPING (Contraction): Maximum contraction iterations reached ({contraction_iterations})")
+                #     break
                     
             else:  # MIXED scenario
                 # In mixed, check if we're stuck in one phase too long
@@ -767,9 +765,9 @@ class AdvancedDynamicRevenueOptimizer:
                 if mixed_worsen_iterations >= 12:
                     logger.info(f"🛑 STOPPING (Mixed): Too many deterioration iterations ({mixed_worsen_iterations})")
                     break
-                elif total_mixed_iterations >= 20:
-                    logger.info(f"🛑 STOPPING (Mixed): Total mixed iterations limit reached ({total_mixed_iterations})")
-                    break
+                # elif total_mixed_iterations >= 20:
+                #     logger.info(f"🛑 STOPPING (Mixed): Total mixed iterations limit reached ({total_mixed_iterations})")
+                #     break
                 
                 # Special case: if we've been in improve phase for long but no crossover
                 if mixed_improve_iterations >= 10 and mixed_worsen_iterations == 0:

@@ -1,8 +1,8 @@
 # --- ML Experiment Tracking & Core Libraries ---
-aim
-aim-ui
-aimrecords
-aimrocks
+# aim
+# aim-ui
+# aimrecords
+# aimrocks
 loguru
 optuna
 
@@ -28,7 +28,7 @@ fastapi-cli
 streamlit
 starlette
 uvicorn
-uvloop
+# uvloop
 websockets
 
 # --- Cloud SDKs (Google & AWS) ---

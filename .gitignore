@@ -2,3 +2,16 @@ venv_sim/
 *.json
 *.aim
 *.jsonl
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+.env/
+venv*/
+env*/
+
+# Alternative common names
+virtualenv/
+.virtualenv/
+myenv/
