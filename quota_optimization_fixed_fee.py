@@ -101,6 +101,16 @@ def compute_ranking_stability(current_rank):
     stability = 0.2 + (0.3 * transition1) + (0.5 * transition2)
     return min(stability, 1.0)
 
+def dynamic_growth_function(iteration: int, total_iterations: int) -> float:
+    """
+    Custom nonlinear effect function:
+    Starts slow, grows faster as iteration increases.
+    We use an exponential curve scaled to the number of iterations.
+    """
+    normalized_iter = iteration / total_iterations
+    return (normalized_iter ** 2.5) * 10  # You can adjust the exponent or scaling factor
+
+
 
 class AdvancedDynamicRevenueOptimizer:
     def __init__(self, 
@@ -452,8 +462,15 @@ class AdvancedDynamicRevenueOptimizer:
         # STEP 2: SCENARIO CLASSIFICATION
         # ================================================================================
         logger.info("\n🔍 STEP 2: Determining optimization scenario")
+          
+        # Initialize separate iteration counters for each scenario condition
+        expansion_iterations = 0          # Counts when predicted > lag in expansion
+        contraction_iterations = 0        # Counts when predicted < lag in contraction  
+        mixed_improve_iterations = 0      # Counts when predicted ≤ lag in mixed
+        mixed_worsen_iterations = 0       # Counts when predicted > lag in mixed
+        mixed_crossover_point = None      # Tracks where crossover occurs
         
-        if min_quota > lag_occupied_slots:
+        if min_quota > lag_occupied_slots or initial_occupied_avg > lag_occupied_slots:
             scenario = "EXPANSION"
             logger.info(f"📈 EXPANSION SCENARIO: min_quota ({min_quota}) > lag_occupied ({lag_occupied_slots})")
             logger.info("🎯 Logic: Higher quotas reduce competition → When predicted > lag → ranking worsens")
@@ -461,10 +478,12 @@ class AdvancedDynamicRevenueOptimizer:
             scenario = "CONTRACTION"
             logger.info(f"📉 CONTRACTION SCENARIO: max_quota ({max_quota}) < lag_occupied ({lag_occupied_slots})")
             logger.info("🎯 Logic: Lower quotas signal demand drop → When predicted < lag → ranking worsens")
+            contraction_iterations = max_quota + 1
         else:
             scenario = "MIXED"
             logger.info(f"🔄 MIXED SCENARIO: min_quota ({min_quota}) < lag_occupied ({lag_occupied_slots}) < max_quota ({max_quota})")
             logger.info("🎯 Logic: Phase 1 (≤lag) → improve ranking | Phase 2 (>lag) → worsen ranking")
+            mixed_improve_iterations = max_quota + 1
         
         # ================================================================================
         # STEP 3: INITIALIZE TRACKING VARIABLES
@@ -478,13 +497,7 @@ class AdvancedDynamicRevenueOptimizer:
             base_rank_change_per_student = 0
         
         logger.info(f"📊 Base Rank Change per Student: {base_rank_change_per_student:.2f}")
-        
-        # Initialize separate iteration counters for each scenario condition
-        expansion_iterations = 0          # Counts when predicted > lag in expansion
-        contraction_iterations = 0        # Counts when predicted < lag in contraction  
-        mixed_improve_iterations = 0      # Counts when predicted ≤ lag in mixed
-        mixed_worsen_iterations = 0       # Counts when predicted > lag in mixed
-        mixed_crossover_point = None      # Tracks where crossover occurs
+      
         
         # Initialize results tracking
         results = []
@@ -513,6 +526,7 @@ class AdvancedDynamicRevenueOptimizer:
             # Calculate weighted average and round to whole students
             weighted_occupied = sum(w * p for w, p in zip(weights, occupied_predictions))
             rounded_occupied = round(weighted_occupied)
+            rounded_occupied = min(rounded_occupied, quota)  # Ensure we don't exceed quota
             quota_filled = rounded_occupied >= quota
             
             logger.info(f"👥 Final Prediction: {rounded_occupied} students (weighted: {weighted_occupied:.1f})")
@@ -528,9 +542,9 @@ class AdvancedDynamicRevenueOptimizer:
                     expansion_iterations += 1
                     
                     # Calculate increasing logarithmic effect
-                    log_factor = math.log(expansion_iterations * 2)
-                    rank_change_magnitude = abs(base_rank_change_per_student) * log_factor
-                    
+                    g_factor = dynamic_growth_function(expansion_iterations, total_iterations)
+                    rank_change_magnitude = abs(base_rank_change_per_student) * g_factor
+                    logger.debug(f"🔍 Expansion Growth Factor: {g_factor:.2f} (Iteration {expansion_iterations})")
                     # Apply program-specific stability factor
                     stability = compute_ranking_stability(current_base_ranking)
                     adjusted_change = rank_change_magnitude * stability
@@ -551,20 +565,20 @@ class AdvancedDynamicRevenueOptimizer:
             elif scenario == "CONTRACTION":
                 # CONTRACTION LOGIC: When predicted < lag_occupied → ranking worsens
                 if rounded_occupied < lag_occupied_slots:
-                    contraction_iterations += 1
+                    contraction_iterations -= 1
                     
                     # Calculate diminishing logarithmic effect
-                    log_factor = math.log(contraction_iterations * 2)
-                    rank_change_magnitude = abs(base_rank_change_per_student) / log_factor
-                    
+                    g_factor = dynamic_growth_function(contraction_iterations, total_iterations)
+                    rank_change_magnitude = abs(base_rank_change_per_student) * g_factor
+                    logger.debug(f"🔍 Contraction Growth Factor: {g_factor:.2f} (Iteration {contraction_iterations})")
                     # Apply program-specific stability factor
                     stability = compute_ranking_stability(current_base_ranking)
                     adjusted_change = rank_change_magnitude * stability
                     
                     # Calculate ranking deterioration due to demand drop
                     deficit_students = lag_occupied_slots - rounded_occupied
-                    ranking_deterioration = deficit_students * adjusted_change * 0.3
-                    current_base_ranking = initial_base_ranking + ranking_deterioration
+                    ranking_deterioration = deficit_students * adjusted_change 
+                    current_base_ranking = initial_base_ranking - ranking_deterioration
                     
                     logger.info(f"📉 CONTRACTION: predicted ({rounded_occupied}) < lag ({lag_occupied_slots})")
                     logger.info(f"📊 Ranking worsens by {ranking_deterioration:.0f} → New ranking: {current_base_ranking:.0f}")
@@ -578,19 +592,19 @@ class AdvancedDynamicRevenueOptimizer:
                 # MIXED LOGIC: Two distinct phases with crossover detection
                 if rounded_occupied <= lag_occupied_slots:
                     # PHASE 1: More selective than last year → ranking improves
-                    mixed_improve_iterations += 1
+                    mixed_improve_iterations -= 1
                     
                     # Calculate diminishing logarithmic effect
-                    log_factor = math.log(mixed_improve_iterations * 2)
-                    rank_change_magnitude = abs(base_rank_change_per_student) / log_factor
-                    
+                    g_factor = dynamic_growth_function(mixed_improve_iterations, total_iterations)
+                    rank_change_magnitude = abs(base_rank_change_per_student) * g_factor
+
                     # Apply program-specific stability factor
                     stability = compute_ranking_stability(current_base_ranking)
                     adjusted_change = rank_change_magnitude * stability
                     
                     # Calculate ranking improvement (decrease = better)
                     selectivity_increase = lag_occupied_slots - rounded_occupied
-                    ranking_improvement = selectivity_increase * adjusted_change * 0.4
+                    ranking_improvement = selectivity_increase * adjusted_change 
                     current_base_ranking = max(0, initial_base_ranking - ranking_improvement)
                     
                     logger.info(f"⬇️ MIXED-IMPROVE: predicted ({rounded_occupied}) ≤ lag ({lag_occupied_slots})")
@@ -606,16 +620,16 @@ class AdvancedDynamicRevenueOptimizer:
                     mixed_worsen_iterations += 1
                     
                     # Calculate diminishing logarithmic effect
-                    log_factor = math.log(mixed_worsen_iterations * 2)
-                    rank_change_magnitude = abs(base_rank_change_per_student) * log_factor
-                    
+                    g_factor = dynamic_growth_function(mixed_worsen_iterations, total_iterations)
+                    rank_change_magnitude = abs(base_rank_change_per_student) * g_factor
+
                     # Apply program-specific stability factor
                     stability = compute_ranking_stability(current_base_ranking)
                     adjusted_change = rank_change_magnitude * stability
                     
                     # Calculate ranking deterioration
                     excess_students = rounded_occupied - lag_occupied_slots
-                    ranking_deterioration = excess_students * adjusted_change * 0.5
+                    ranking_deterioration = excess_students * adjusted_change 
                     current_base_ranking = initial_base_ranking + ranking_deterioration
                     
                     logger.info(f"⬆️ MIXED-WORSEN: predicted ({rounded_occupied}) > lag ({lag_occupied_slots})")
